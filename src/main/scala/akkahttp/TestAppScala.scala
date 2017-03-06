@@ -8,7 +8,7 @@ import com.typesafe.config.{Config, ConfigFactory}
 import scala.concurrent.Await
 import scala.io.Source
 
-object TestApp extends App {
+object TestAppScala extends App {
 
   val testConf: Config = ConfigFactory.load()
 
@@ -28,7 +28,7 @@ object TestApp extends App {
   val fileHandler = client.upload(testFile)
 
   //download the file
-  val target = File.createTempFile("testapp_download", "")
+  val target = new File("target/testfile_download.scaladsl.txt")
   val future = fileHandler.flatMap{handler =>
     client.download(handler, target)
   }

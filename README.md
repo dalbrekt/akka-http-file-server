@@ -3,7 +3,13 @@
 A file server example to download/upload large files with akka-http.
 
 ## How to use
-```sbt "run-main akkahttp.TestApp"```
+
+### Scala Client
+```sbt "run-main akkahttp.TestAppScala"```
+
+
+### Java client
+```sbt "run-main akkahttp.TestAppJava"```
 
 Then Browser http://127.0.0.1:9112/
 
