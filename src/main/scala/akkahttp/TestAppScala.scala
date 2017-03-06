@@ -27,6 +27,10 @@ object TestAppScala extends App {
   val testFile = new File(getClass.getResource("/testfile.txt").toURI())
   val fileHandler = client.upload(testFile)
 
+  // upload the file
+  val testFile2 = new File(getClass.getResource("/testfile2.txt").toURI())
+  val fileHandler2 = client.uploadToStream(testFile2)
+
   //download the file
   val target = new File("target/testfile_download.scaladsl.txt")
   val future = fileHandler.flatMap{handler =>

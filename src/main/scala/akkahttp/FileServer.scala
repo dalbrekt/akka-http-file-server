@@ -1,6 +1,6 @@
 package akkahttp
 
-import java.io.File
+import java.io.{File, FileOutputStream}
 import java.nio.file.Paths
 
 import akka.actor.ActorSystem
@@ -8,6 +8,7 @@ import akka.event.Logging
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.ServerBinding
 import akka.http.scaladsl.client.RequestBuilding.Get
+import akka.http.scaladsl.client.RequestBuilding.Post
 import akka.http.scaladsl.client.RequestBuilding.Put
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.marshalling.Marshaller._
@@ -20,8 +21,9 @@ import akka.http.scaladsl.server.directives.{DebuggingDirectives, LogEntry, Logg
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.unmarshalling.Unmarshaller._
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{FileIO, Source}
+import akka.stream.scaladsl.{FileIO, Source, StreamConverters}
 import akkahttp.FileDirective.{FileInfo, _}
+import com.google.common.io.Closer
 import spray.json.DefaultJsonProtocol._
 import spray.json._
 
@@ -38,11 +40,12 @@ class FileServer(system: ActorSystem, host: String, port: Int) {
   import FileServer.fileInfoFormat
 
   def logRequest(req: HttpRequest) = s"> ${req.protocol.value}\n> ${req.method.value} ${req.uri}\n> ${req.headers}\n> ${req.entity}\n"
+
   def logResponse(res: HttpResponse) = s"< ${res.status} \n< ${res.headers}\n< ${res.entity}\n"
 
   def requestMethodAndResponseStatusAsInfo(req: HttpRequest): RouteResult => Option[LogEntry] = {
     case RouteResult.Complete(res) => Some(LogEntry(logRequest(req) + "\n" + logResponse(res), Logging.InfoLevel))
-    case _                         => None // no log entries for rejections
+    case _ => None // no log entries for rejections
   }
 
   def printRequestResponse(req: HttpRequest)(res: RouteResult): Unit =
@@ -54,19 +57,42 @@ class FileServer(system: ActorSystem, host: String, port: Int) {
 
   val route: Route =
 
-      path("files") {
-        put {
+    path("files") {
+      put {
+        logRequestResultPrintln {
+          fileUpload("datafile") {
+            case (metadata, byteSource) =>
+              val path = Paths.get("target") resolve metadata.fileName
+              val sink = FileIO.toPath(Paths.get("target") resolve metadata.fileName)
+              val writeResult = byteSource.runWith(sink)
+
+              onSuccess(writeResult) { result =>
+                result.status match {
+                  case Success(_) => complete(ToResponseMarshallable(
+                    Map(metadata.fieldName -> FileInfo(metadata.fileName, path.toString, result.count))))
+                  case Failure(e) => throw e
+                }
+              }
+          }
+        }
+      } ~
+        post {
           logRequestResultPrintln {
             fileUpload("datafile") {
               case (metadata, byteSource) =>
                 val path = Paths.get("target") resolve metadata.fileName
-                val sink = FileIO.toPath(Paths.get("target") resolve metadata.fileName)
+
+                val out = new FileOutputStream(path.toFile)
+                val sink = StreamConverters.fromOutputStream(() => out)
                 val writeResult = byteSource.runWith(sink)
 
                 onSuccess(writeResult) { result =>
                   result.status match {
-                    case Success(_) => complete(ToResponseMarshallable(
-                      Map(metadata.fieldName -> FileInfo(metadata.fileName, path.toString, result.count))))
+                    case Success(_) => {
+                      out.close()
+                      complete(ToResponseMarshallable(
+                        Map(metadata.fieldName -> FileInfo(metadata.fileName, path.toString, result.count))))
+                    }
                     case Failure(e) => throw e
                   }
                 }
@@ -80,7 +106,7 @@ class FileServer(system: ActorSystem, host: String, port: Int) {
             }
           }
         }
-      } ~
+    } ~
       pathEndOrSingleSlash {
         val entity = HttpEntity(ContentTypes.`text/html(UTF-8)`,
           """
@@ -127,6 +153,12 @@ object FileServer {
     def upload(file: File): Future[FileHandle] = {
       val target = server.withPath(Path("/files"))
       val response = Http(system).singleRequest(Put(target, entity(file)))
+      response.flatMap(some => Unmarshal(some).to[Map[Name, FileDirective.FileInfo]]).map(map => FileHandle(map.head._2))
+    }
+
+    def uploadToStream(file: File): Future[FileHandle] = {
+      val target = server.withPath(Path("/files"))
+      val response = Http(system).singleRequest(Post(target, entity(file)))
       response.flatMap(some => Unmarshal(some).to[Map[Name, FileDirective.FileInfo]]).map(map => FileHandle(map.head._2))
     }
 
